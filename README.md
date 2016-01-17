@@ -7,7 +7,7 @@ To reproduce segmentation fault:
     * docker build -t openresty-passenger:with-ssl openresty-passenger-debug-with-ssl/
     * docker build -t openresty-passenger:without-ssl openresty-passenger-debug-without-ssl/
 3. Start container built without SSL support by running `docker run -p 8181:80 openresty-passenger:with-ssl` and check URLs.
-4. Stop SSL-enabled container with `docker run -p 8181:80 openresty-passenger:with-ssl` and check URLs.
+4. Start SSL-enabled container with `docker run -p 8181:80 openresty-passenger:with-ssl` and check URLs.
 
 ## Test URLs
 
