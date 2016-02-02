@@ -1,0 +1,87 @@
+FROM ubuntu:trusty
+
+RUN echo "deb http://ppa.launchpad.net/brightbox/ruby-ng/ubuntu trusty main" >> /etc/apt/sources.list.d/brightbox-ruby.list \
+    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C3173AA6 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+            ruby2.2 ruby2.2-dev ca-certificates \
+            curl perl make build-essential procps \
+            libcurl4-openssl-dev libevent-dev libffi-dev \
+            libxml2-dev libmysqlclient-dev libpq-dev libsqlite3-dev \
+            libglib2.0-dev autoconf libxslt-dev libyaml-dev libbz2-dev \
+            libreadline-dev libncurses5-dev libpcre3-dev libssl-dev \
+            gdb mc git
+
+RUN cd /opt \
+    &&  git clone -b GH-1724_Subrequest https://github.com/phusion/passenger.git
+
+ENV OPENRESTY_VERSION 1.9.3.2
+ENV OPENRESTY_PREFIX /opt/openresty
+ENV NGINX_PREFIX /opt/openresty/nginx
+ENV VAR_PREFIX /var/nginx
+
+# NginX prefix is automatically set by OpenResty to $OPENRESTY_PREFIX/nginx
+# look for $ngx_prefix in https://github.com/openresty/ngx_openresty/blob/master/util/configure
+
+RUN cd /root \
+ && echo "==> Downloading OpenResty..." \
+ && curl -sSL http://openresty.org/download/ngx_openresty-${OPENRESTY_VERSION}.tar.gz | tar -xvz \
+ && echo "==> Configuring OpenResty..." \
+ && cd ngx_openresty-* \
+ && readonly NPROC=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || 1) \
+ && echo "using upto $NPROC threads" \
+ && ./configure \
+    --prefix=$OPENRESTY_PREFIX \
+    --http-client-body-temp-path=$VAR_PREFIX/client_body_temp \
+    --http-proxy-temp-path=$VAR_PREFIX/proxy_temp \
+    --http-log-path=$VAR_PREFIX/access.log \
+    --error-log-path=$VAR_PREFIX/error.log \
+    --pid-path=$VAR_PREFIX/nginx.pid \
+    --lock-path=$VAR_PREFIX/nginx.lock \
+    --with-luajit \
+    --with-pcre-jit \
+    --add-module=$(/opt/passenger/bin/passenger-config --nginx-addon-dir) \
+    --with-http_ssl_module \
+    --without-http_ssi_module \
+    --without-http_userid_module \
+    --without-http_uwsgi_module \
+    --without-http_scgi_module \
+    -j${NPROC} \
+ && echo "==> Building OpenResty..." \
+ && make -j${NPROC} \
+ && echo "==> Installing OpenResty..." \
+ && make install \
+ && echo "==> Finishing..." \
+ && ln -sf $NGINX_PREFIX/sbin/nginx /usr/local/bin/nginx \
+ && ln -sf $NGINX_PREFIX/sbin/nginx /usr/local/bin/openresty \
+ && ln -sf $OPENRESTY_PREFIX/bin/resty /usr/local/bin/resty \
+ && ln -sf $OPENRESTY_PREFIX/luajit/bin/luajit-* $OPENRESTY_PREFIX/luajit/bin/lua \
+ && ln -sf $OPENRESTY_PREFIX/luajit/bin/luajit-* /usr/local/bin/lua \
+ && rm -rf /root/ngx_openresty*
+
+RUN gem install bundle --no-ri --no-rdoc \
+  && useradd -Mu 1000 app \
+  && mkdir -p /app/src /app/bundle \
+  && chown -R app:app /app
+
+USER app
+
+COPY app/Gemfile /app/src/Gemfile
+COPY app/Gemfile.lock /app/src/Gemfile.lock
+
+RUN cd /app/src && bundler install --deployment
+
+COPY app/ /app/src/
+
+USER root
+
+RUN cd /opt/passenger/src/ruby_supportlib/phusion_passenger/vendor/ \
+    && git clone https://github.com/phusion/union_station_hooks_core.git \
+    && git clone https://github.com/phusion/union_station_hooks_rails.git
+
+WORKDIR $NGINX_PREFIX/
+
+RUN rm -rf conf/* html/*
+COPY nginx $NGINX_PREFIX/
+
+CMD ["nginx", "-g", "daemon off; error_log /dev/stderr debug;"]
